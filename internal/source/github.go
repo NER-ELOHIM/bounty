@@ -158,6 +158,16 @@ func repoFromAPIURL(raw string) string {
 	return raw
 }
 
-// FASE 2: adicionar Algora como segunda fonte. Não implementei agora porque
-// não confirmei o endereço e o formato da API pública deles, e chutar isso
-// gera um adaptador que falha em produção sem dizer por quê.
+// FASE 2: Algora como segunda fonte.
+//
+// Investigado em 30/08/2026 e NÃO implementado: a API pública não responde como
+// a documentação descreve. O que foi testado, para ninguém repetir o caminho:
+//
+//	api.algora.io/api/orgs/{org}/bounties  → 301 para algora.io, que devolve 404
+//	algora.io/api/orgs/{org}/bounties      → 404 em cinco organizações diferentes
+//	api.algora.io/bounties                 → 406 com Accept: application/json,
+//	                                         404 sem Accept — inconsistente
+//
+// A rota /bounties existe (406 é negociação de conteúdo, não rota ausente), mas
+// não achei a combinação de cabeçalho que ela aceita. Antes de implementar,
+// confirmar contra github.com/algora-io/sdk, que é o cliente oficial.
