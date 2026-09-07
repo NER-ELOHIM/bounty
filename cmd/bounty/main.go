@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,6 +30,11 @@ const version = "iode-adapter-bounty 1.0"
 
 // config é o objeto livre que vem em config na requisição.
 type config struct {
+	// Termos procurados no histórico de comentários. É a estratégia que
+	// encontra bounty de projeto real; ver a nota em internal/source/github.go.
+	Termos    []string `json:"termos"`
+	MinStars  int      `json:"min_stars"`
+	MaxIdle   int      `json:"max_idle_days"`
 	Labels    []string `json:"labels"`
 	Languages []string `json:"languages"`
 	Limit     int      `json:"limit"`
@@ -66,19 +72,17 @@ func run(ctx context.Context) error {
 			return &contract.Error{Code: contract.ExitBadConfig, Err: fmt.Errorf("config inválida: %w", err)}
 		}
 	}
-	if len(cfg.Labels) == 0 {
-		cfg.Labels = []string{"bounty"}
+	if len(cfg.Termos) == 0 {
+		cfg.Termos = []string{"/bounty"}
 	}
 	if cfg.TimeoutS <= 0 {
-		cfg.TimeoutS = 20
+		cfg.TimeoutS = 60
 	}
 
-	// Uma consulta por rótulo. O limite da Search API é 30 por minuto, então
-	// uma lista longa de rótulos estoura a cota e não coleta nada.
-	if len(cfg.Labels) > source.SearchLimit {
+	if len(cfg.Termos) > source.SearchLimit {
 		return &contract.Error{
 			Code: contract.ExitBadConfig,
-			Err:  fmt.Errorf("%d rótulos passam do limite de %d consultas por minuto da Search API", len(cfg.Labels), source.SearchLimit),
+			Err:  fmt.Errorf("%d termos passam do limite de %d consultas por minuto da Search API", len(cfg.Termos), source.SearchLimit),
 		}
 	}
 
@@ -99,28 +103,65 @@ func run(ctx context.Context) error {
 		failed   int
 	)
 
-	for _, label := range cfg.Labels {
-		found, err := gh.Search(ctx, label, "", req.Since, cfg.PerPage)
+	for _, termo := range cfg.Termos {
+		found, err := gh.SearchComments(ctx, termo, req.Since, cfg.PerPage)
 		if err != nil {
 			failed++
-			warnings = append(warnings, fmt.Sprintf("rótulo %q: %v", label, err))
+			warnings = append(warnings, fmt.Sprintf("termo %q: %v", termo, err))
 			continue
 		}
 		for _, issue := range found {
 			if seen[issue.ID] {
-				continue // a mesma issue casa com mais de um rótulo
+				continue // a mesma issue casa com mais de um termo
 			}
 			seen[issue.ID] = true
 			issues = append(issues, issue)
 		}
 	}
 
-	// Todas as consultas falharam: erro recuperável, o motor tenta de novo.
-	if failed == len(cfg.Labels) {
+	if failed == len(cfg.Termos) {
 		return &contract.Error{
 			Code: contract.ExitRetryable,
 			Err:  fmt.Errorf("todas as %d consultas falharam: %s", failed, strings.Join(warnings, "; ")),
 		}
+	}
+
+	// Metadados dos repositórios, para julgar quais valem o tempo. Sai da API
+	// principal (5.000/hora), e não da Search API (30/minuto), então a chamada
+	// por repositório é barata.
+	nomes := make([]string, 0, len(issues))
+	vistos := map[string]bool{}
+	for _, issue := range issues {
+		if !vistos[issue.Repo] {
+			vistos[issue.Repo] = true
+			nomes = append(nomes, issue.Repo)
+		}
+	}
+	repos, err := gh.Repos(ctx, nomes)
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("metadados incompletos: %v", err))
+	}
+
+	qualidade := rank.DefaultQuality()
+	if cfg.MinStars > 0 {
+		qualidade.MinStars = cfg.MinStars
+	}
+	if cfg.MaxIdle > 0 {
+		qualidade.MaxIdleDays = cfg.MaxIdle
+	}
+
+	antes := len(issues)
+	issues, descartes := qualidade.Filtrar(issues, repos, time.Now())
+	if antes > len(issues) {
+		// O relato vira aviso: filtro que descarta em silêncio é filtro que
+		// ninguém percebe estar calibrado errado.
+		partes := make([]string, 0, len(descartes))
+		for motivo, n := range descartes {
+			partes = append(partes, fmt.Sprintf("%s: %d", motivo, n))
+		}
+		sort.Strings(partes)
+		warnings = append(warnings, fmt.Sprintf("qualidade: %d de %d descartados (%s)",
+			antes-len(issues), antes, strings.Join(partes, ", ")))
 	}
 
 	now := time.Now()
