@@ -1,6 +1,6 @@
-// Package contract implementa o contrato de adaptador do iode, versão 1.
+// Package contract implements version 1 of the engine adapter contract.
 //
-// Ver docs/CONTRATOS.md no repositório do motor: requisição JSON no stdin,
+// See the engine's contract docs: a JSON request on stdin,
 // resposta JSON no stdout, resultado no código de saída.
 package contract
 
@@ -18,9 +18,9 @@ const Version = 1
 // Exit codes defined by the contract.
 const (
 	ExitOK           = 0 // sucesso
-	ExitRetryable    = 1 // erro recuperável, o motor tenta de novo
-	ExitIncompatible = 2 // versão de contrato desconhecida
-	ExitBadConfig    = 3 // configuração inválida, falha permanente
+	ExitRetryable    = 1 // recoverable error; the engine will retry
+	ExitIncompatible = 2 // unknown contract version
+	ExitBadConfig    = 3 // invalid configuration; a permanent failure
 )
 
 // Limits the engine enforces. We truncate before it has to.
@@ -76,20 +76,20 @@ func ReadRequest(r io.Reader) (*Request, error) {
 		return nil, errf(ExitRetryable, "lendo stdin: %w", err)
 	}
 	if len(raw) == 0 {
-		return nil, errf(ExitBadConfig, "requisição vazia no stdin")
+		return nil, errf(ExitBadConfig, "empty request on stdin")
 	}
 
 	var req Request
 	if err := json.Unmarshal(raw, &req); err != nil {
 		// Um `since` sem offset chega aqui: o parser de time.Time do
 		// encoding/json exige RFC 3339 completo, que é o que queremos.
-		return nil, errf(ExitBadConfig, "requisição inválida: %w", err)
+		return nil, errf(ExitBadConfig, "invalid request: %w", err)
 	}
 
-	// Versão desconhecida é código 2: o motor desabilita o adaptador em vez
-	// de ficar retentando algo que nunca vai funcionar.
+	// An unknown version is code 2: the engine disables the adapter instead
+	// of retrying something that will never work.
 	if req.Contract != Version {
-		return nil, errf(ExitIncompatible, "contrato %d incompatível, este adaptador fala %d", req.Contract, Version)
+		return nil, errf(ExitIncompatible, "incompatible contract %d; this adapter speaks %d", req.Contract, Version)
 	}
 
 	return &req, nil
@@ -131,13 +131,13 @@ func shrinkMeta(item *Item) error {
 		var widest string
 		var widestSize int
 		for k, v := range item.Meta {
-			b, _ := json.Marshal(v) // erro já capturado acima, no meta inteiro
+			b, _ := json.Marshal(v) // the error was already caught above, on the whole meta
 			if len(b) > widestSize {
 				widest, widestSize = k, len(b)
 			}
 		}
 		if widest == "" {
-			return fmt.Errorf("meta não cabe em %d bytes e não há chave a remover", MaxMeta)
+			return fmt.Errorf("meta does not fit in %d bytes and there is no key left to drop", MaxMeta)
 		}
 		delete(item.Meta, widest)
 	}

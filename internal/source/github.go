@@ -1,4 +1,4 @@
-// Package source busca bounties abertos em plataformas públicas.
+// Package source finds open bounties on public platforms.
 package source
 
 import (
@@ -12,9 +12,9 @@ import (
 	"time"
 )
 
-// SearchLimit é o teto do GitHub para a Search API: 30 requisições por minuto
-// com token, 10 sem. É bem mais apertado que o limite da API geral, então uma
-// consulta por rótulo por execução é o que cabe.
+// SearchLimit is GitHub's ceiling for the Search API: 30 requests per minute
+// with a token, 10 without. That is far tighter than the general API's limit,
+// so one query per term per run is what fits.
 const SearchLimit = 30
 
 // Issue is one open issue carrying a bounty label.
@@ -35,8 +35,8 @@ type Issue struct {
 // GitHub queries the GitHub Search API for issues.
 type GitHub struct {
 	Client *http.Client
-	Token  string // opcional; sem ele o limite cai para 10 req/min
-	Base   string // sobrescrito nos testes
+	Token  string // optional; without it the limit drops to 10 req/min
+	Base   string // overridden in tests
 }
 
 // NewGitHub builds a client with an explicit timeout on every request.
@@ -84,20 +84,20 @@ func (g *GitHub) Search(ctx context.Context, label, language string, since *time
 		terms = append(terms, "created:>="+since.UTC().Format("2006-01-02"))
 	}
 
-	return g.buscar(ctx, strings.Join(terms, " "), perPage)
+	return g.search(ctx, strings.Join(terms, " "), perPage)
 }
 
-// buscar executa uma consulta já montada contra a Search API.
+// search runs an already-composed query against the Search API.
 //
-// A montagem da consulta fica com quem chama, porque cada estratégia de caça
-// monta a sua; o que se repete — paginação, cabeçalho, limite de requisições,
-// tradução da resposta — mora aqui.
-func (g *GitHub) buscar(ctx context.Context, consulta string, perPage int) ([]Issue, error) {
+// Composing the query is the caller's job, because every hunting strategy
+// composes its own; what repeats — paging, headers, rate-limit handling,
+// translating the response — lives here.
+func (g *GitHub) search(ctx context.Context, query string, perPage int) ([]Issue, error) {
 	if perPage < 1 || perPage > 100 {
 		perPage = 50
 	}
 	q := url.Values{}
-	q.Set("q", consulta)
+	q.Set("q", query)
 	q.Set("per_page", strconv.Itoa(perPage))
 	q.Set("sort", "created")
 	q.Set("order", "desc")
@@ -105,7 +105,7 @@ func (g *GitHub) buscar(ctx context.Context, consulta string, perPage int) ([]Is
 	endpoint := g.Base + "/search/issues?" + q.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("montando requisição: %w", err)
+		return nil, fmt.Errorf("building the request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
@@ -116,23 +116,23 @@ func (g *GitHub) buscar(ctx context.Context, consulta string, perPage int) ([]Is
 
 	resp, err := g.Client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("consultando o GitHub: %w", err)
+		return nil, fmt.Errorf("querying GitHub: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck // corpo somente-leitura
+	defer resp.Body.Close() //nolint:errcheck // read-only body
 
 	switch {
 	case resp.StatusCode == http.StatusForbidden, resp.StatusCode == http.StatusTooManyRequests:
 		reset := resp.Header.Get("X-RateLimit-Reset")
-		return nil, fmt.Errorf("limite de requisições atingido (reset em %s); use IODE_GITHUB_TOKEN", reset)
+		return nil, fmt.Errorf("rate limit reached (resets at %s); set IODE_GITHUB_TOKEN", reset)
 	case resp.StatusCode == http.StatusUnauthorized:
-		return nil, fmt.Errorf("token rejeitado pelo GitHub")
+		return nil, fmt.Errorf("token rejected by GitHub")
 	case resp.StatusCode != http.StatusOK:
-		return nil, fmt.Errorf("GitHub devolveu HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("GitHub returned HTTP %d", resp.StatusCode)
 	}
 
 	var body searchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return nil, fmt.Errorf("interpretando resposta: %w", err)
+		return nil, fmt.Errorf("parsing the response: %w", err)
 	}
 
 	issues := make([]Issue, 0, len(body.Items))
@@ -158,7 +158,7 @@ func (g *GitHub) buscar(ctx context.Context, consulta string, perPage int) ([]Is
 	return issues, nil
 }
 
-// repoFromAPIURL turns https://api.github.com/repos/dono/nome into dono/nome.
+// repoFromAPIURL turns https://api.github.com/repos/owner/name into owner/name.
 func repoFromAPIURL(raw string) string {
 	const marker = "/repos/"
 	if i := strings.Index(raw, marker); i >= 0 {
@@ -169,41 +169,47 @@ func repoFromAPIURL(raw string) string {
 
 // FASE 2: Algora como segunda fonte.
 //
-// Investigado em 30/08/2026 e NÃO implementado: a API pública não responde como
-// a documentação descreve. O que foi testado, para ninguém repetir o caminho:
+// Investigated on 2026-08-30 and NOT implemented: the public API does not
+// answer the way the documentation describes. What was tried, so nobody repeats
+// the walk:
 //
-//	api.algora.io/api/orgs/{org}/bounties  → 301 para algora.io, que devolve 404
-//	algora.io/api/orgs/{org}/bounties      → 404 em cinco organizações diferentes
-//	api.algora.io/bounties                 → 406 com Accept: application/json,
-//	                                         404 sem Accept — inconsistente
+//	api.algora.io/api/orgs/{org}/bounties  → 301 to algora.io, which 404s
+//	algora.io/api/orgs/{org}/bounties      → 404 across five organisations
+//	api.algora.io/bounties                 → 406 with Accept: application/json,
+//	                                         404 without — inconsistent
 //
-// A rota /bounties existe (406 é negociação de conteúdo, não rota ausente), mas
-// não achei a combinação de cabeçalho que ela aceita. Antes de implementar,
-// confirmar contra github.com/algora-io/sdk, que é o cliente oficial.
+// Closed on 2026-09-07 by reading Algora's own source: the live route is
+// /api/trpc/bounty.list, and its controller renders an empty list
+// unconditionally. There is no header combination that would have worked.
 
-// ── Busca por comentário, e não por rótulo ──────────────────────────────────
+// ── Searching comments rather than labels ──────────────────────────────────
 //
-// Investigado em 07/09/2026, e é o que substitui a estratégia de rótulo.
+// Investigated on 2026-09-07, and this is what replaces the label strategy.
 //
-// A Algora e a Polar, as duas plataformas que financiavam issue de código
-// aberto, saíram desse mercado: a Algora virou contratação e desativou a API
-// (a rota /api/trpc/bounty.list existe, responde 200 e devolve sempre
-// {"items":[]} — a lógica está comentada no fonte dela), e a Polar virou
-// meio de pagamento para produtos, sem nenhum endpoint de issue ou reward.
+// Algora and Polar, the two platforms that funded open-source issues, have left
+// that market: Algora pivoted to hiring and switched its API off (the route
+// /api/trpc/bounty.list exists, answers 200, and always returns {"items":[]} —
+// the query logic is commented out in its source), and Polar became a payments
+// platform for products, with no issue or reward endpoint at all.
 //
-// O que sobrou é o rastro no próprio GitHub: `/bounty` é o comando que cria
-// uma recompensa numa issue, e ele fica no histórico de comentários. Medido no
-// mesmo dia, comparando as três buscas:
+// What is left is the trail on GitHub itself: `/bounty` is the command that
+// creates a reward on an issue, and it stays in the comment history. Measured
+// the same day, comparing three searches:
 //
-//	label:"💎 Bounty"       →   558 resultados, quase todos fazenda
-//	label:"bounty"          → 4.281 resultados, fazenda e micro-bounty de cripto
-//	"/bounty" in:comments   → 17.997, e aqui aparecem asterisk/asterisk,
-//	                          vllm-project/vllm-omni, circlefin/arc-node
+//	label:"💎 Bounty"       →    558 results, nearly all farms
+//	label:"bounty"          →  4,281 results, farms and crypto micro-bounties
+//	"/bounty" in:comments   → 17,997, and here asterisk/asterisk,
+//	                          vllm-project/vllm-omni and circlefin/arc-node appear
 //
-// Rótulo virou ruído porque qualquer um cria um; comentário com o comando é
-// rastro de quem usou a plataforma de verdade.
+// Labels became noise because anyone can create one; a comment carrying the
+// command is the trace of someone who actually used the platform.
+//
+// One honest limit: GitHub tokenises the query and drops the slash, so this
+// matches the word "bounty" in comments rather than the command specifically.
+// It is a better filter than labels, not an exact one, and it does not recover
+// the amount — that lives in the comment body and is not fetched yet.
 
-// Repo é o mínimo sobre um repositório que permite julgar se ele é sério.
+// Repo is the minimum about a repository needed to judge whether it is serious.
 type Repo struct {
 	FullName  string
 	Stars     int
@@ -214,54 +220,54 @@ type Repo struct {
 	OpenIssue int
 }
 
-// SearchComments procura issues abertas cujo histórico de comentários contém
-// o termo. É a busca que encontra bounty de projeto real.
-func (g *GitHub) SearchComments(ctx context.Context, termo string, since *time.Time, perPage int) ([]Issue, error) {
-	terms := []string{strconv.Quote(termo) + " in:comments", "is:issue", "is:open"}
+// SearchComments looks for open issues whose comment history contains the
+// term. This is the search that finds bounties on real projects.
+func (g *GitHub) SearchComments(ctx context.Context, term string, since *time.Time, perPage int) ([]Issue, error) {
+	terms := []string{strconv.Quote(term) + " in:comments", "is:issue", "is:open"}
 	if since != nil {
-		// updated, e não created: uma issue antiga que ganhou bounty ontem é
-		// exatamente a que interessa, e created a esconderia para sempre.
+		// updated, not created: an old issue that gained a bounty yesterday is
+		// exactly the one that matters, and created would hide it forever.
 		terms = append(terms, "updated:>="+since.UTC().Format("2006-01-02"))
 	}
 
-	return g.buscar(ctx, strings.Join(terms, " "), perPage)
+	return g.search(ctx, strings.Join(terms, " "), perPage)
 }
 
-// Repos busca os metadados de vários repositórios.
+// Repos fetches metadata for several repositories.
 //
-// Vale a chamada extra: a Search API não deixa filtrar issue por estrela do
-// repositório, então a qualidade só dá para julgar depois. E o custo é baixo
-// porque isto sai da API principal, com 5.000 chamadas por hora, e não da
-// Search API, que dá 30 por minuto.
-func (g *GitHub) Repos(ctx context.Context, nomes []string) (map[string]Repo, error) {
-	saida := make(map[string]Repo, len(nomes))
+// The extra call earns its keep: the Search API cannot filter issues by the
+// repository's star count, so quality can only be judged afterwards. And the
+// cost is low because this comes out of the core API, at 5,000 calls an hour,
+// rather than the Search API's 30 a minute.
+func (g *GitHub) Repos(ctx context.Context, names []string) (map[string]Repo, error) {
+	out := make(map[string]Repo, len(names))
 
-	for _, nome := range nomes {
-		if nome == "" || saida[nome].FullName != "" {
+	for _, name := range names {
+		if name == "" || out[name].FullName != "" {
 			continue
 		}
 		select {
 		case <-ctx.Done():
-			// Devolve o que já deu tempo de buscar: meia lista de repositórios
-			// julgados é melhor que erro, e quem chama decide o que fazer.
-			return saida, ctx.Err()
+			// Return whatever was fetched in time: half a list of judged
+			// repositories beats an error, and the caller decides what to do.
+			return out, ctx.Err()
 		default:
 		}
 
-		repo, err := g.repo(ctx, nome)
+		repo, err := g.repo(ctx, name)
 		if err != nil {
-			continue // repositório apagado ou privado; a issue cai fora no filtro
+			continue // deleted or private repository; the issue fails the filter
 		}
-		saida[nome] = repo
+		out[name] = repo
 	}
 
-	return saida, nil
+	return out, nil
 }
 
 func (g *GitHub) repo(ctx context.Context, fullName string) (Repo, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.Base+"/repos/"+fullName, nil)
 	if err != nil {
-		return Repo{}, fmt.Errorf("montando requisição: %w", err)
+		return Repo{}, fmt.Errorf("building the request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
@@ -272,12 +278,12 @@ func (g *GitHub) repo(ctx context.Context, fullName string) (Repo, error) {
 
 	resp, err := g.Client.Do(req)
 	if err != nil {
-		return Repo{}, fmt.Errorf("consultando %s: %w", fullName, err)
+		return Repo{}, fmt.Errorf("querying %s: %w", fullName, err)
 	}
-	defer resp.Body.Close() //nolint:errcheck // corpo somente-leitura
+	defer resp.Body.Close() //nolint:errcheck // read-only body
 
 	if resp.StatusCode != http.StatusOK {
-		return Repo{}, fmt.Errorf("%s devolveu HTTP %d", fullName, resp.StatusCode)
+		return Repo{}, fmt.Errorf("%s returned HTTP %d", fullName, resp.StatusCode)
 	}
 
 	var body struct {
@@ -290,7 +296,7 @@ func (g *GitHub) repo(ctx context.Context, fullName string) (Repo, error) {
 		OpenIssues      int       `json:"open_issues_count"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return Repo{}, fmt.Errorf("interpretando %s: %w", fullName, err)
+		return Repo{}, fmt.Errorf("parsing %s: %w", fullName, err)
 	}
 
 	return Repo{

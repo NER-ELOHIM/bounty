@@ -58,12 +58,12 @@ func TestTopOrdenaELimita(t *testing.T) {
 		t.Errorf("primeiro = issue %d, esperado 2", top[0].Issue.ID)
 	}
 	if top[0].Score < top[1].Score {
-		t.Error("resultado não está em ordem decrescente")
+		t.Error("the result is not in descending order")
 	}
 }
 
 func TestTopListaVazia(t *testing.T) {
 	if got := Top(nil, []string{"go"}, agora, 10); len(got) != 0 {
-		t.Errorf("esperava lista vazia, veio %d", len(got))
+		t.Errorf("expected an empty list, got %d", len(got))
 	}
 }

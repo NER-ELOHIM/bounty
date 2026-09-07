@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-// O servidor de teste sobe em loopback: nenhum teste fala com o GitHub real.
+// The test server binds to loopback: no test talks to the real GitHub.
 func servidor(t *testing.T, status int, corpo string) *GitHub {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("X-GitHub-Api-Version"); got != "2022-11-28" {
-			t.Errorf("cabeçalho de versão ausente: %q", got)
+			t.Errorf("version header missing: %q", got)
 		}
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(corpo))
@@ -27,7 +27,7 @@ func servidor(t *testing.T, status int, corpo string) *GitHub {
 }
 
 const respostaOK = `{"total_count":1,"incomplete_results":false,"items":[{
-  "id":42,"number":7,"title":"Corrigir paginação","body":"detalhes",
+  "id":42,"number":7,"title":"Fix pagination","body":"details",
   "html_url":"https://github.com/dono/nome/issues/7",
   "repository_url":"https://api.github.com/repos/dono/nome",
   "user":{"login":"alguem"},
@@ -40,10 +40,10 @@ func TestSearchInterpretaResposta(t *testing.T) {
 
 	issues, err := gh.Search(context.Background(), "bounty", "go", nil, 50)
 	if err != nil {
-		t.Fatalf("erro inesperado: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(issues) != 1 {
-		t.Fatalf("esperava 1 issue, vieram %d", len(issues))
+		t.Fatalf("expected 1 issue, got %d", len(issues))
 	}
 
 	got := issues[0]
@@ -66,7 +66,7 @@ func TestSearchLimiteDeRequisicoes(t *testing.T) {
 
 	_, err := gh.Search(context.Background(), "bounty", "", nil, 50)
 	if err == nil {
-		t.Fatal("esperava erro")
+		t.Fatal("expected an error")
 	}
 	if !strings.Contains(err.Error(), "IODE_GITHUB_TOKEN") {
 		t.Errorf("a mensagem deveria dizer como resolver: %v", err)
@@ -77,7 +77,7 @@ func TestSearchStatusInesperado(t *testing.T) {
 	gh := servidor(t, http.StatusInternalServerError, `oops`)
 
 	if _, err := gh.Search(context.Background(), "bounty", "", nil, 50); err == nil {
-		t.Fatal("esperava erro para HTTP 500")
+		t.Fatal("expected an error for HTTP 500")
 	}
 }
 
@@ -88,7 +88,7 @@ func TestSearchRespeitaContextoCancelado(t *testing.T) {
 	cancel()
 
 	if _, err := gh.Search(ctx, "bounty", "", nil, 50); err == nil {
-		t.Fatal("esperava erro com contexto cancelado")
+		t.Fatal("expected an error on a cancelled context")
 	}
 }
 

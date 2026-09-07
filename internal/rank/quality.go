@@ -7,123 +7,125 @@ import (
 	"github.com/Amadeus-22/bounty/internal/source"
 )
 
-// Quality decide se um repositório merece o tempo de alguém.
+// Quality decides whether a repository is worth someone's time.
 //
-// Existe por um motivo medido, não teórico. Em 07/09/2026, uma coleta por
-// rótulo trouxe 28 issues, e 23 delas vinham de um único repositório sintético,
-// com issues duplicadas ("reissue via #743") e rótulo "reward:" sem valor. As
-// outras cinco vinham de repositórios pessoais de uma pessoa só.
+// It exists for a measured reason, not a theoretical one. On 2026-09-07 a
+// label-based collection returned 28 issues, and 23 of them came from a single
+// synthetic repository, with duplicated issues ("reissue via #743") and a
+// "reward:" label carrying no value. The other five came from one-person
+// personal repositories.
 //
-// A causa é econômica: recompensa atrai quem quer farmar recompensa. Desde que
-// agente de código ficou barato, criar um repositório com cem issues falsas e
-// rótulo de bounty virou estratégia de quem quer aparecer em busca. Sem este
-// filtro, é isso que a caça devolve.
+// The cause is economic: a reward attracts people farming rewards. Since coding
+// agents became cheap, standing up a repository with a hundred fake issues and
+// a bounty label became a way to show up in search results. Without this
+// filter, that is what the hunt returns.
 type Quality struct {
-	// MinStars é o corte principal. Não mede qualidade de código; mede que
-	// alguém além do dono já usou aquilo. Fazenda não tem estrela.
+	// MinStars is the main cut. It does not measure code quality; it measures
+	// that someone besides the owner has used the thing. Farms have no stars.
 	MinStars int
-	// MaxIdleDays descarta projeto abandonado: bounty em repositório parado há
-	// um ano quase nunca é pago, porque não há quem faça o merge.
+	// MaxIdleDays drops abandoned projects: a bounty on a repository that has
+	// been still for a year is almost never paid, because nobody is there to
+	// merge it.
 	MaxIdleDays int
-	// AllowForks permite fork. O padrão é não: fork com bounty é o disfarce
-	// mais comum de fazenda, porque herda as estrelas do original na aparência
-	// sem herdar o mantenedor que paga.
+	// AllowForks permits forks. The default is not to: a fork carrying a bounty
+	// is the most common farm disguise, because it inherits the original's
+	// appearance without inheriting the maintainer who pays.
 	AllowForks bool
 }
 
-// DefaultQuality são os cortes calibrados para qualidade acima de volume.
+// DefaultQuality is calibrated for quality over volume.
 //
-// 200 estrelas e 90 dias sem parar é uma régua alta, e ela custa oferta: numa
-// amostra real ela derruba a maioria dos resultados. É o que se quer aqui —
-// vale mais uma issue por semana que renda do que quinze que não rendem.
+// Two hundred stars and ninety days of activity is a high bar, and it costs
+// supply: on a real sample it drops most of the results. That is the intent —
+// one issue a week that pays is worth more than fifteen that do not.
 //
-// O que cada corte compra:
+// What each cut buys:
 //
-//	200 estrelas   projeto que alguém além do dono usa, e cujo mantenedor tem
-//	               reputação a perder se não pagar o que prometeu
-//	90 dias        projeto vivo. Bounty em repositório parado quase nunca é
-//	               pago, porque não há quem faça o merge
-//	sem fork       fork com bounty é o disfarce mais comum de fazenda: parece
-//	               o projeto famoso, mas quem paga não está lá
+//	200 stars   a project someone besides the owner uses, whose maintainer has
+//	            a reputation to lose by not paying what was promised
+//	90 days     a living project. A bounty on a still repository is almost
+//	            never paid, because nobody is there to merge it
+//	no forks    a fork carrying a bounty is the commonest farm disguise: it
+//	            looks like the famous project, but whoever pays is not there
 //
-// Há um custo real e ele deve ser dito: quanto mais famoso o projeto, mais
-// gente disputa o mesmo bounty. Se a caça começar a devolver só issue com dez
-// comentários, o corte de estrelas é o primeiro a baixar.
+// There is a real cost and it should be said: the more famous the project, the
+// more people compete for the same bounty. If the hunt starts returning only
+// issues with ten comments on them, the star cut is the first to come down.
 func DefaultQuality() Quality {
 	return Quality{MinStars: 200, MaxIdleDays: 90, AllowForks: false}
 }
 
-// nomesSuspeitos são padrões no nome do repositório que, sozinhos, quase sempre
-// indicam fazenda. Um projeto real raramente se chama "algo-bounties": ele tem
-// um nome próprio e recompensa é detalhe operacional, não a identidade dele.
-var nomesSuspeitos = []string{
+// farmNames are repository-name patterns that on their own almost always mean
+// a farm. A real project is rarely called "something-bounties": it has a name
+// of its own, and rewards are an operational detail, not its identity.
+var farmNames = []string{
 	"bounty-hunter", "bounties", "bug-bounty", "bounty-plaza",
 	"agent-playground", "oss-hunter", "test-repo", "sandbox",
 }
 
-// Aprova diz se o repositório passa, e por que não passou quando falha.
-func (q Quality) Aprova(r source.Repo, agora time.Time) (bool, string) {
+// Approve reports whether the repository passes, and why it did not when it fails.
+func (q Quality) Approve(r source.Repo, now time.Time) (bool, string) {
 	if r.FullName == "" {
-		return false, "repositório não encontrado"
+		return false, "repository not found"
 	}
 	if !q.AllowForks && r.Fork {
-		return false, "é um fork"
+		return false, "is a fork"
 	}
 	if r.Archived {
-		return false, "está arquivado"
+		return false, "is archived"
 	}
 	if r.Stars < q.MinStars {
-		return false, "tem menos de " + itoa(q.MinStars) + " estrelas"
+		return false, "has fewer than " + itoa(q.MinStars) + " stars"
 	}
 	if q.MaxIdleDays > 0 && !r.PushedAt.IsZero() {
-		if dias := int(agora.Sub(r.PushedAt).Hours() / 24); dias > q.MaxIdleDays {
-			return false, "sem commit há " + itoa(dias) + " dias"
+		if days := int(now.Sub(r.PushedAt).Hours() / 24); days > q.MaxIdleDays {
+			return false, "no commit in " + itoa(days) + " days"
 		}
 	}
 
-	nome := strings.ToLower(r.FullName)
-	if i := strings.IndexByte(nome, '/'); i >= 0 {
-		nome = nome[i+1:]
+	name := strings.ToLower(r.FullName)
+	if i := strings.IndexByte(name, '/'); i >= 0 {
+		name = name[i+1:]
 	}
-	for _, suspeito := range nomesSuspeitos {
-		if strings.Contains(nome, suspeito) {
-			return false, "nome de fazenda de bounty (" + suspeito + ")"
+	for _, pattern := range farmNames {
+		if strings.Contains(name, pattern) {
+			return false, "bounty-farm name (" + pattern + ")"
 		}
 	}
 
 	return true, ""
 }
 
-// Filtrar aplica o corte à lista de issues e devolve as aprovadas mais o
-// relato do que caiu, por motivo. O relato vira aviso na resposta do
-// adaptador: um filtro que descarta em silêncio é um filtro que ninguém
-// percebe estar calibrado errado.
-func (q Quality) Filtrar(
+// Filter applies the cut to the issue list and returns what passed alongside a
+// per-reason account of what did not. That account becomes a warning in the
+// adapter's response: a filter that discards silently is a filter nobody
+// notices is miscalibrated.
+func (q Quality) Filter(
 	issues []source.Issue,
 	repos map[string]source.Repo,
-	agora time.Time,
-) (aprovadas []source.Issue, descartes map[string]int) {
-	descartes = map[string]int{}
+	now time.Time,
+) (approved []source.Issue, dropped map[string]int) {
+	dropped = map[string]int{}
 
 	for _, issue := range issues {
-		ok, motivo := q.Aprova(repos[issue.Repo], agora)
+		ok, reason := q.Approve(repos[issue.Repo], now)
 		if !ok {
-			descartes[motivo]++
+			dropped[reason]++
 			continue
 		}
-		aprovadas = append(aprovadas, issue)
+		approved = append(approved, issue)
 	}
 
-	return aprovadas, descartes
+	return approved, dropped
 }
 
-// itoa evita importar strconv só para duas mensagens de erro.
+// itoa avoids importing strconv for the sake of two error messages.
 func itoa(n int) string {
 	if n == 0 {
 		return "0"
 	}
-	negativo := n < 0
-	if negativo {
+	negative := n < 0
+	if negative {
 		n = -n
 	}
 	var buf [20]byte
@@ -133,7 +135,7 @@ func itoa(n int) string {
 		buf[i] = byte('0' + n%10)
 		n /= 10
 	}
-	if negativo {
+	if negative {
 		i--
 		buf[i] = '-'
 	}

@@ -13,7 +13,7 @@ vet:
 
 check: build vet test
 
-# Instala o adaptador onde o iode procura por ele.
+# Installs the adapter where the engine looks for it.
 install: build
 	install -D -m 0755 $(BIN) $(HOME)/.config/iode/adapters/bounty
 

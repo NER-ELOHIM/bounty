@@ -7,52 +7,52 @@ import (
 	"github.com/Amadeus-22/bounty/internal/source"
 )
 
-func repoSaudavel(agora time.Time) source.Repo {
-	return source.Repo{FullName: "asterisk/asterisk", Stars: 2400, PushedAt: agora.Add(-24 * time.Hour)}
+func healthyRepo(now time.Time) source.Repo {
+	return source.Repo{FullName: "asterisk/asterisk", Stars: 2400, PushedAt: now.Add(-24 * time.Hour)}
 }
 
-func TestAprovaRepositorioSaudavel(t *testing.T) {
-	agora := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
-	if ok, motivo := DefaultQuality().Aprova(repoSaudavel(agora), agora); !ok {
-		t.Fatalf("deveria aprovar, recusou por %q", motivo)
+func TestApprovesAHealthyRepository(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	if ok, reason := DefaultQuality().Approve(healthyRepo(now), now); !ok {
+		t.Fatalf("should have approved, refused with %q", reason)
 	}
 }
 
-func TestRecusa(t *testing.T) {
-	agora := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+func TestRefuses(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
 	q := DefaultQuality()
 
 	casos := []struct {
-		nome   string
+		name   string
 		repo   source.Repo
-		motivo string
+		reason string
 	}{
-		{"desconhecido", source.Repo{}, "não encontrado"},
-		{"fork", source.Repo{FullName: "x/qdrant", Stars: 9000, Fork: true, PushedAt: agora}, "fork"},
-		{"arquivado", source.Repo{FullName: "x/y", Stars: 900, Archived: true, PushedAt: agora}, "arquivado"},
-		{"poucas estrelas", source.Repo{FullName: "x/y", Stars: 60, PushedAt: agora}, "estrelas"},
-		{"parado", source.Repo{FullName: "x/y", Stars: 900, PushedAt: agora.Add(-200 * 24 * time.Hour)}, "sem commit"},
-		// Os três nomes vistos na coleta real de 07/09/2026.
-		{"fazenda", source.Repo{FullName: "SecureBananaLabs/bug-bounty", Stars: 900, PushedAt: agora}, "fazenda"},
-		{"playground", source.Repo{FullName: "xevrion-v2/agent-playground", Stars: 900, PushedAt: agora}, "fazenda"},
-		{"plaza", source.Repo{FullName: "z/bounty-plaza", Stars: 900, PushedAt: agora}, "fazenda"},
+		{"unknown", source.Repo{}, "not found"},
+		{"fork", source.Repo{FullName: "x/qdrant", Stars: 9000, Fork: true, PushedAt: now}, "fork"},
+		{"archived", source.Repo{FullName: "x/y", Stars: 900, Archived: true, PushedAt: now}, "archived"},
+		{"too few stars", source.Repo{FullName: "x/y", Stars: 60, PushedAt: now}, "stars"},
+		{"stalled", source.Repo{FullName: "x/y", Stars: 900, PushedAt: now.Add(-200 * 24 * time.Hour)}, "no commit"},
+		// The three names seen in the real 2026-09-07 collection.
+		{"farm", source.Repo{FullName: "SecureBananaLabs/bug-bounty", Stars: 900, PushedAt: now}, "farm"},
+		{"playground", source.Repo{FullName: "xevrion-v2/agent-playground", Stars: 900, PushedAt: now}, "farm"},
+		{"plaza", source.Repo{FullName: "z/bounty-plaza", Stars: 900, PushedAt: now}, "farm"},
 	}
 
 	for _, c := range casos {
-		t.Run(c.nome, func(t *testing.T) {
-			ok, motivo := q.Aprova(c.repo, agora)
+		t.Run(c.name, func(t *testing.T) {
+			ok, reason := q.Approve(c.repo, now)
 			if ok {
-				t.Fatalf("deveria recusar %s", c.repo.FullName)
+				t.Fatalf("should have refused %s", c.repo.FullName)
 			}
-			if !contains(motivo, c.motivo) {
-				t.Fatalf("motivo %q não menciona %q", motivo, c.motivo)
+			if !contains(reason, c.reason) {
+				t.Fatalf("reason %q does not mention %q", reason, c.reason)
 			}
 		})
 	}
 }
 
-func TestFiltrarRelataOsDescartes(t *testing.T) {
-	agora := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+func TestFilterReportsWhatItDropped(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
 	issues := []source.Issue{
 		{ID: 1, Repo: "asterisk/asterisk"},
 		{ID: 2, Repo: "SecureBananaLabs/bug-bounty"},
@@ -60,19 +60,19 @@ func TestFiltrarRelataOsDescartes(t *testing.T) {
 		{ID: 4, Repo: "apagado/sumiu"},
 	}
 	repos := map[string]source.Repo{
-		"asterisk/asterisk":           repoSaudavel(agora),
-		"SecureBananaLabs/bug-bounty": {FullName: "SecureBananaLabs/bug-bounty", Stars: 800, PushedAt: agora},
+		"asterisk/asterisk":           healthyRepo(now),
+		"SecureBananaLabs/bug-bounty": {FullName: "SecureBananaLabs/bug-bounty", Stars: 800, PushedAt: now},
 	}
 
-	aprovadas, descartes := DefaultQuality().Filtrar(issues, repos, agora)
-	if len(aprovadas) != 1 || aprovadas[0].ID != 1 {
-		t.Fatalf("esperava só a issue 1, veio %v", aprovadas)
+	approved, dropped := DefaultQuality().Filter(issues, repos, now)
+	if len(approved) != 1 || approved[0].ID != 1 {
+		t.Fatalf("expected only issue 1, got %v", approved)
 	}
-	if total := descartes["nome de fazenda de bounty (bug-bounty)"]; total != 2 {
-		t.Fatalf("esperava 2 descartes por fazenda, veio %d (%v)", total, descartes)
+	if total := dropped["bounty-farm name (bug-bounty)"]; total != 2 {
+		t.Fatalf("expected 2 farm drops, got %d (%v)", total, dropped)
 	}
-	if descartes["repositório não encontrado"] != 1 {
-		t.Fatalf("o repositório ausente deveria ser relatado: %v", descartes)
+	if dropped["repository not found"] != 1 {
+		t.Fatalf("the missing repository should be reported: %v", dropped)
 	}
 }
 

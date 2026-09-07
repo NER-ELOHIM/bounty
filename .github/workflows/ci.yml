@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The version comes from go.mod, so the workflow cannot drift from what
+      # the module declares it needs.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Formatting is checked rather than applied: CI reports, it does not edit.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt'd:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # No test reaches the network: GitHub responses come from an httptest
+      # server on loopback, so no token is needed here.
+      - name: go test
+        run: go test -race ./...
