@@ -133,3 +133,24 @@ func TestCommentsFalhaForaDe200(t *testing.T) {
 		t.Fatal("expected an error for HTTP 404")
 	}
 }
+
+func TestSearchCommentsExcluiIssuesComPRVinculado(t *testing.T) {
+	var query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.Query().Get("q")
+		_, _ = w.Write([]byte(`{"total_count":0,"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	gh := NewGitHub("token-de-teste", 5*time.Second)
+	gh.Base = srv.URL
+	if _, err := gh.SearchComments(context.Background(), "/bounty", nil, 50); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, want := range []string{`"/bounty" in:comments`, "is:open", "-linked:pr"} {
+		if !strings.Contains(query, want) {
+			t.Errorf("query %q is missing %q", query, want)
+		}
+	}
+}

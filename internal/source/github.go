@@ -228,7 +228,9 @@ type Repo struct {
 // SearchComments looks for open issues whose comment history contains the
 // term. This is the search that finds bounties on real projects.
 func (g *GitHub) SearchComments(ctx context.Context, term string, since *time.Time, perPage int) ([]Issue, error) {
-	terms := []string{strconv.Quote(term) + " in:comments", "is:issue", "is:open"}
+	// -linked:pr leaves out issues that already have a pull request attached:
+	// someone got there first, and a reward with a patch waiting is not open.
+	terms := []string{strconv.Quote(term) + " in:comments", "is:issue", "is:open", "-linked:pr"}
 	if since != nil {
 		// updated, not created: an old issue that gained a bounty yesterday is
 		// exactly the one that matters, and created would hide it forever.

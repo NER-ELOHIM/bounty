@@ -81,6 +81,9 @@ rule, a visitor asking "would the Core Team consider allocating a $200 bounty?"
 on `mautic/mautic` was reported as a $200 bounty. Attempts count from anyone,
 since visitors are exactly who announces them.
 
+The search itself leaves out issues that already have a pull request linked
+(`-linked:pr`): a reward with a patch waiting for review is not open any more.
+
 An issue with no reward command and no amount in its title or labels is dropped,
 and the count is returned as a warning. On that same run 297 results became 33
 after the quality filter and 3 after this one. Set `require_reward` to `false`
