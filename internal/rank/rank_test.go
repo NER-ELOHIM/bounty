@@ -67,3 +67,55 @@ func TestTopListaVazia(t *testing.T) {
 		t.Errorf("expected an empty list, got %d", len(got))
 	}
 }
+
+func TestScoreUsaRecompensaDosComentarios(t *testing.T) {
+	semValor := source.Issue{Title: "x", CreatedAt: agora.Add(-24 * time.Hour)}
+	comValor := semValor
+	comValor.RewardUSD = 500
+
+	got := Score(comValor, nil, agora)
+	if got.Amount != 500 {
+		t.Errorf("Amount = %d, esperado 500", got.Amount)
+	}
+	if got.Score <= Score(semValor, nil, agora).Score {
+		t.Errorf("recompensa lida dos comentários deveria pontuar mais")
+	}
+}
+
+func TestScorePenalizaTentativasComTeto(t *testing.T) {
+	base := source.Issue{Title: "x", CreatedAt: agora.Add(-24 * time.Hour)}
+	livre := Score(base, nil, agora).Score
+
+	uma := base
+	uma.Attempts = 1
+	muitas := base
+	muitas.Attempts = 9
+
+	if got := Score(uma, nil, agora).Score; got != livre-10 {
+		t.Errorf("uma tentativa: score = %d, esperado %d", got, livre-10)
+	}
+	if got := Score(muitas, nil, agora).Score; got != livre-30 {
+		t.Errorf("nove tentativas: score = %d, esperado %d (teto)", got, livre-30)
+	}
+}
+
+func TestScoreCasaLinguagemComoPalavraInteira(t *testing.T) {
+	casos := []struct {
+		titulo string
+		labels []string
+		want   bool
+	}{
+		{"Fix the Go client", nil, true},
+		{"Fix pagination", []string{"lang: go"}, true},
+		{"golang: fix pagination", nil, false},
+		{"Translate the README", []string{"good first issue"}, false},
+		{"Add category filter", nil, false},
+	}
+	for _, c := range casos {
+		issue := source.Issue{Title: c.titulo, Labels: c.labels, CreatedAt: agora.Add(-40 * 24 * time.Hour)}
+		got := Score(issue, []string{"go"}, agora).Score >= 40
+		if got != c.want {
+			t.Errorf("%q %v: casou=%v, esperado %v", c.titulo, c.labels, got, c.want)
+		}
+	}
+}

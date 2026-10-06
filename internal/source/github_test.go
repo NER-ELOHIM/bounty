@@ -100,3 +100,36 @@ func TestRepoFromAPIURL(t *testing.T) {
 		t.Errorf("entrada inesperada deveria voltar intacta, veio %q", got)
 	}
 }
+
+func TestCommentsDevolveOsCorpos(t *testing.T) {
+	gh := servidor(t, http.StatusOK, `[
+	  {"body":"/bounty $150","author_association":"MEMBER","user":{"type":"User"}},
+	  {"body":"## 💎 $150 bounty","author_association":"NONE","user":{"type":"Bot"}},
+	  {"body":"/attempt #7","author_association":"NONE","user":{"type":"User"}}]`)
+
+	got, err := gh.Comments(context.Background(), "dono/nome", 7)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []Comment{
+		{Body: "/bounty $150", Maintainer: true},
+		{Body: "## 💎 $150 bounty", Maintainer: true},
+		{Body: "/attempt #7", Maintainer: false},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Comments = %+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("Comments[%d] = %+v, esperado %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestCommentsFalhaForaDe200(t *testing.T) {
+	gh := servidor(t, http.StatusNotFound, `{"message":"Not Found"}`)
+
+	if _, err := gh.Comments(context.Background(), "dono/nome", 7); err == nil {
+		t.Fatal("expected an error for HTTP 404")
+	}
+}

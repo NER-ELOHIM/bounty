@@ -57,10 +57,34 @@ three searches on the same day:
 Labels became noise because anyone can create one. A comment carrying the
 command is the trace of someone who actually used the platform.
 
-**One honest limit:** GitHub tokenises the query and drops the slash, so this
-matches the word "bounty" in comments rather than the command specifically. It
-is a much better filter than labels, not an exact one — and it does not recover
-the amount, which lives in the comment body and is not fetched yet.
+**One honest limit:** GitHub tokenises the query and drops the slash, so the
+search matches the word "bounty" in comments rather than the command
+specifically. It is a much better filter than labels, not an exact one — which
+is why what survives the quality filter is read a second time.
+
+---
+
+## Reading the reward
+
+For every issue that passes the quality filter, the adapter fetches the comments
+(one page of 100, from the core API) and reads three things:
+
+| what | how it is recognised |
+|---|---|
+| the reward | a `/bounty $150` or `/reward 50` command at the start of a line, or the platform's reply (`## 💎 $150 bounty`) |
+| whether one was posted at all | any of the above, or a bare `/bounty` |
+| the competition | comments starting with `/attempt`, `/claim` or `/try` |
+
+A reward counts **only when a maintainer or a bot wrote it** (owner, member,
+collaborator, or an account of type Bot). Measured on 2026-10-06: without that
+rule, a visitor asking "would the Core Team consider allocating a $200 bounty?"
+on `mautic/mautic` was reported as a $200 bounty. Attempts count from anyone,
+since visitors are exactly who announces them.
+
+An issue with no reward command and no amount in its title or labels is dropped,
+and the count is returned as a warning. On that same run 297 results became 33
+after the quality filter and 3 after this one. Set `require_reward` to `false`
+to keep them.
 
 ---
 
@@ -105,6 +129,7 @@ echo '{"contract":1,"project":"bounties","path":"","since":null,
 | `languages` | list | — | your stack; a match scores +40 |
 | `min_stars` | int | 200 | quality cut |
 | `max_idle_days` | int | 90 | quality cut |
+| `require_reward` | bool | true | drop issues with no reward command and no amount |
 | `limit` | int | 25 | how many to return |
 | `per_page` | int | 50 | results per query, 100 max |
 | `timeout_seconds` | int | 60 | total budget |
@@ -127,8 +152,9 @@ input always produces the same output.
 
 | signal | weight |
 |---|---|
-| matches one of your languages | +40 |
-| amount ≥ $1000 / ≥ 200 / > 0 | +40 / +25 / +10 |
+| matches one of your languages, as a whole word | +40 |
+| amount ≥ $1000 / ≥ 200 / > 0 (comments, then title and labels) | +40 / +25 / +10 |
+| each announced attempt, capped at three | −10 |
 | opened this week / this month | +20 / +10 |
 | open for over a year | −20 |
 | more than 15 comments | −15 |

@@ -30,6 +30,11 @@ type Issue struct {
 	Comments  int
 	CreatedAt time.Time
 	UpdatedAt time.Time
+
+	// Filled from the comment history after the search, not by the search.
+	RewardUSD     int  // whole dollars; 0 when no amount could be read
+	RewardCommand bool // a reward command or the platform's reply was found
+	Attempts      int  // comments announcing an attempt or a claim
 }
 
 // GitHub queries the GitHub Search API for issues.
@@ -308,4 +313,64 @@ func (g *GitHub) repo(ctx context.Context, fullName string) (Repo, error) {
 		PushedAt:  body.PushedAt,
 		OpenIssue: body.OpenIssues,
 	}, nil
+}
+
+// Comment is one comment on an issue.
+type Comment struct {
+	Body string
+	// Maintainer is true for the repository's owner, members and collaborators,
+	// and for bots. Anyone can write "$200 bounty" in a thread; only these can
+	// actually have posted one.
+	Maintainer bool
+}
+
+// Comments returns an issue's comments, oldest first.
+//
+// One page of 100 is read and no more: the reward command sits near the top of
+// the thread, and an issue with more comments than that is one the ranking
+// already pushes down for being crowded.
+func (g *GitHub) Comments(ctx context.Context, fullName string, number int) ([]Comment, error) {
+	endpoint := fmt.Sprintf("%s/repos/%s/issues/%d/comments?per_page=100", g.Base, fullName, number)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building the request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "iode-adapter-bounty/2.0")
+	if g.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+g.Token)
+	}
+
+	resp, err := g.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("querying comments of %s#%d: %w", fullName, number, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // read-only body
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("comments of %s#%d returned HTTP %d", fullName, number, resp.StatusCode)
+	}
+
+	var body []struct {
+		Body        string `json:"body"`
+		Association string `json:"author_association"`
+		User        struct {
+			Type string `json:"type"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("parsing comments of %s#%d: %w", fullName, number, err)
+	}
+
+	out := make([]Comment, 0, len(body))
+	for _, c := range body {
+		maintainer := c.User.Type == "Bot"
+		switch c.Association {
+		case "OWNER", "MEMBER", "COLLABORATOR":
+			maintainer = true
+		}
+		out = append(out, Comment{Body: c.Body, Maintainer: maintainer})
+	}
+	return out, nil
 }

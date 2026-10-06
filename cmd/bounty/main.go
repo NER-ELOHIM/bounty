@@ -4,7 +4,7 @@
 // response on stdout, the outcome in the exit code. Manual use:
 //
 //	echo '{"contract":1,"project":"bounties","path":"/tmp","since":null,
-//	       "config":{"labels":["bounty"],"languages":["go","php"]}}' | bounty
+//	       "config":{"terms":["/bounty"],"languages":["go","php"]}}' | bounty
 //
 // The GitHub token comes from IODE_GITHUB_TOKEN. The engine forwards anything
 // prefixed IODE_ to the subprocess and never reads a credential file itself.
@@ -25,7 +25,7 @@ import (
 	"github.com/Amadeus-22/bounty/internal/source"
 )
 
-const version = "iode-adapter-bounty 1.0"
+const version = "iode-adapter-bounty 1.1"
 
 // config is the free-form object carried in the request's config field.
 type config struct {
@@ -36,9 +36,13 @@ type config struct {
 	MaxIdle   int      `json:"max_idle_days"`
 	Labels    []string `json:"labels"`
 	Languages []string `json:"languages"`
-	Limit     int      `json:"limit"`
-	PerPage   int      `json:"per_page"`
-	TimeoutS  int      `json:"timeout_seconds"`
+	// RequireReward drops issues whose comments carry no reward command and
+	// whose labels carry no amount. On by default; a pointer so that an explicit
+	// false is told apart from an absent key.
+	RequireReward *bool `json:"require_reward"`
+	Limit         int   `json:"limit"`
+	PerPage       int   `json:"per_page"`
+	TimeoutS      int   `json:"timeout_seconds"`
 }
 
 func main() {
@@ -163,6 +167,35 @@ func run(ctx context.Context) error {
 			before-len(issues), before, strings.Join(parts, ", ")))
 	}
 
+	// The search matches the word "bounty" anywhere in a thread, so what
+	// survived is read once more: the comments say whether a reward was really
+	// posted, how much, and how many people are already on it.
+	requireReward := cfg.RequireReward == nil || *cfg.RequireReward
+	confirmed := make([]source.Issue, 0, len(issues))
+	unread, unrewarded := 0, 0
+	for _, issue := range issues {
+		comments, err := gh.Comments(ctx, issue.Repo, issue.Number)
+		if err != nil {
+			unread++ // judged on labels alone, below
+		}
+		reward := rank.ReadReward(comments)
+		issue.RewardUSD, issue.RewardCommand, issue.Attempts = reward.Amount, reward.Command, reward.Attempts
+
+		labelled := rank.Amount(issue.Title+" "+strings.Join(issue.Labels, " ")) > 0
+		if requireReward && !issue.RewardCommand && !labelled {
+			unrewarded++
+			continue
+		}
+		confirmed = append(confirmed, issue)
+	}
+	issues = confirmed
+	if unrewarded > 0 {
+		warnings = append(warnings, fmt.Sprintf("reward: %d dropped (no reward command or amount found)", unrewarded))
+	}
+	if unread > 0 {
+		warnings = append(warnings, fmt.Sprintf("reward: comments unreadable for %d issue(s)", unread))
+	}
+
 	now := time.Now()
 	items := make([]contract.Item, 0, len(issues))
 	for _, scored := range rank.Top(issues, cfg.Languages, now, cfg.Limit) {
@@ -184,6 +217,9 @@ func toItem(s rank.Scored) contract.Item {
 	}
 	if s.Amount > 0 {
 		meta["amount_usd"] = s.Amount
+	}
+	if s.Issue.Attempts > 0 {
+		meta["attempts"] = s.Issue.Attempts
 	}
 
 	return contract.Item{

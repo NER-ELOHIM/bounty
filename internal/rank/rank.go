@@ -52,7 +52,7 @@ func Score(issue source.Issue, languages []string, now time.Time) Scored {
 		if lang == "" {
 			continue
 		}
-		if strings.Contains(haystack, strings.ToLower(lang)) {
+		if hasWord(haystack, strings.ToLower(lang)) {
 			score += 40
 			reasons = append(reasons, "matches "+lang)
 			break
@@ -60,6 +60,11 @@ func Score(issue source.Issue, languages []string, now time.Time) Scored {
 	}
 
 	amount := Amount(issue.Title + " " + strings.Join(issue.Labels, " "))
+	// The comment history is the more reliable source: a label says "bounty",
+	// the command says how much.
+	if issue.RewardUSD > amount {
+		amount = issue.RewardUSD
+	}
 	switch {
 	case amount >= 1000:
 		score += 40
@@ -91,10 +96,41 @@ func Score(issue source.Issue, languages []string, now time.Time) Scored {
 		reasons = append(reasons, "long discussion")
 	}
 
+	// Each announced attempt is someone ahead of you. The penalty is capped so
+	// a large reward on a contested issue still surfaces.
+	if issue.Attempts > 0 {
+		penalty := issue.Attempts * 10
+		if penalty > 30 {
+			penalty = 30
+		}
+		score -= penalty
+		reasons = append(reasons, strconv.Itoa(issue.Attempts)+" attempt(s) announced")
+	}
+
 	if reasons == nil {
 		reasons = []string{"no strong signal"}
 	}
 	return Scored{Issue: issue, Score: score, Amount: amount, Reason: strings.Join(reasons, ", ")}
+}
+
+// hasWord reports whether word appears in s as a whole word. A plain substring
+// test would find "go" inside "good first issue" and score every such issue as
+// a Go match.
+func hasWord(s, word string) bool {
+	isWordChar := func(r byte) bool {
+		return r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '+' || r == '#'
+	}
+	for i := 0; ; {
+		j := strings.Index(s[i:], word)
+		if j < 0 {
+			return false
+		}
+		start, end := i+j, i+j+len(word)
+		if (start == 0 || !isWordChar(s[start-1])) && (end == len(s) || !isWordChar(s[end])) {
+			return true
+		}
+		i = start + 1
+	}
 }
 
 // Top scores every issue and returns them ordered, best first.
