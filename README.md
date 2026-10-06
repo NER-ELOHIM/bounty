@@ -84,10 +84,36 @@ since visitors are exactly who announces them.
 The search itself leaves out issues that already have a pull request linked
 (`-linked:pr`): a reward with a patch waiting for review is not open any more.
 
+A reward also **expires**. One posted more than 180 days ago, or posted by the
+bot of a platform that has closed (`algora-pbc[bot]`), is not read as a reward.
+Measured on 2026-10-06: the only bounties found on a PHP project
+(`coollabsio/coolify`, $150 and $100) dated from June 2024, came through Algora,
+and had been taken up by a maintainer two months later. Dropped issues of this
+kind are counted in their own warning.
+
 An issue with no reward command and no amount in its title or labels is dropped,
 and the count is returned as a warning. On that same run 297 results became 33
 after the quality filter and 3 after this one. Set `require_reward` to `false`
 to keep them.
+
+---
+
+## Audit contests
+
+The issue-bounty market is close to empty. Measured on 2026-10-06: Algora's
+listing answers 404, and Opire's public feed (`api.opire.dev/rewards`) held five
+rewards in total, the largest $100 on an unknown repository.
+
+Reward money still moves in **audit contests**: a protocol posts a prize pool,
+and whoever finds valid vulnerabilities in the published code shares it. The
+adapter reads Sherlock's public feed for running and announced contests and adds
+them to the result, marked `[audit contest]` in the title. They skip the GitHub
+filters — they are not issues, and the platform has vetted who pays.
+
+Contests are rare (three between June and October 2026), so most runs return
+none, and that is the correct answer. Set `contests` to `false` to leave them
+out. Why only Sherlock, and what was tried elsewhere, is recorded in
+[`internal/source/sherlock.go`](internal/source/sherlock.go).
 
 ---
 
@@ -133,6 +159,7 @@ echo '{"contract":1,"project":"bounties","path":"","since":null,
 | `min_stars` | int | 200 | quality cut |
 | `max_idle_days` | int | 90 | quality cut |
 | `require_reward` | bool | true | drop issues with no reward command and no amount |
+| `contests` | bool | true | add running and announced audit contests |
 | `limit` | int | 25 | how many to return |
 | `per_page` | int | 50 | results per query, 100 max |
 | `timeout_seconds` | int | 60 | total budget |

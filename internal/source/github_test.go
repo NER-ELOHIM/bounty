@@ -103,18 +103,18 @@ func TestRepoFromAPIURL(t *testing.T) {
 
 func TestCommentsDevolveOsCorpos(t *testing.T) {
 	gh := servidor(t, http.StatusOK, `[
-	  {"body":"/bounty $150","author_association":"MEMBER","user":{"type":"User"}},
-	  {"body":"## 💎 $150 bounty","author_association":"NONE","user":{"type":"Bot"}},
-	  {"body":"/attempt #7","author_association":"NONE","user":{"type":"User"}}]`)
+	  {"body":"/bounty $150","author_association":"MEMBER","created_at":"2026-08-28T14:32:10Z","user":{"login":"dono","type":"User"}},
+	  {"body":"## 💎 $150 bounty","author_association":"NONE","created_at":"2026-08-28T14:32:11Z","user":{"login":"plataforma[bot]","type":"Bot"}},
+	  {"body":"/attempt #7","author_association":"NONE","created_at":"2026-08-29T09:00:00Z","user":{"login":"visita","type":"User"}}]`)
 
 	got, err := gh.Comments(context.Background(), "dono/nome", 7)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	want := []Comment{
-		{Body: "/bounty $150", Maintainer: true},
-		{Body: "## 💎 $150 bounty", Maintainer: true},
-		{Body: "/attempt #7", Maintainer: false},
+		{Body: "/bounty $150", Author: "dono", CreatedAt: time.Date(2026, 8, 28, 14, 32, 10, 0, time.UTC), Maintainer: true},
+		{Body: "## 💎 $150 bounty", Author: "plataforma[bot]", CreatedAt: time.Date(2026, 8, 28, 14, 32, 11, 0, time.UTC), Maintainer: true},
+		{Body: "/attempt #7", Author: "visita", CreatedAt: time.Date(2026, 8, 29, 9, 0, 0, 0, time.UTC), Maintainer: false},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("Comments = %+v", got)

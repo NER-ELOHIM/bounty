@@ -319,7 +319,9 @@ func (g *GitHub) repo(ctx context.Context, fullName string) (Repo, error) {
 
 // Comment is one comment on an issue.
 type Comment struct {
-	Body string
+	Body      string
+	Author    string
+	CreatedAt time.Time
 	// Maintainer is true for the repository's owner, members and collaborators,
 	// and for bots. Anyone can write "$200 bounty" in a thread; only these can
 	// actually have posted one.
@@ -355,10 +357,12 @@ func (g *GitHub) Comments(ctx context.Context, fullName string, number int) ([]C
 	}
 
 	var body []struct {
-		Body        string `json:"body"`
-		Association string `json:"author_association"`
+		Body        string    `json:"body"`
+		Association string    `json:"author_association"`
+		CreatedAt   time.Time `json:"created_at"`
 		User        struct {
-			Type string `json:"type"`
+			Login string `json:"login"`
+			Type  string `json:"type"`
 		} `json:"user"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
@@ -372,7 +376,7 @@ func (g *GitHub) Comments(ctx context.Context, fullName string, number int) ([]C
 		case "OWNER", "MEMBER", "COLLABORATOR":
 			maintainer = true
 		}
-		out = append(out, Comment{Body: c.Body, Maintainer: maintainer})
+		out = append(out, Comment{Body: c.Body, Author: c.User.Login, CreatedAt: c.CreatedAt, Maintainer: maintainer})
 	}
 	return out, nil
 }

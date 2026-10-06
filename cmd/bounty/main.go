@@ -25,7 +25,7 @@ import (
 	"github.com/Amadeus-22/bounty/internal/source"
 )
 
-const version = "iode-adapter-bounty 1.1"
+const version = "iode-adapter-bounty 1.2"
 
 // config is the free-form object carried in the request's config field.
 type config struct {
@@ -40,9 +40,11 @@ type config struct {
 	// whose labels carry no amount. On by default; a pointer so that an explicit
 	// false is told apart from an absent key.
 	RequireReward *bool `json:"require_reward"`
-	Limit         int   `json:"limit"`
-	PerPage       int   `json:"per_page"`
-	TimeoutS      int   `json:"timeout_seconds"`
+	// Contests adds public audit contests (Sherlock) to the result. On by default.
+	Contests *bool `json:"contests"`
+	Limit    int   `json:"limit"`
+	PerPage  int   `json:"per_page"`
+	TimeoutS int   `json:"timeout_seconds"`
 }
 
 func main() {
@@ -172,18 +174,23 @@ func run(ctx context.Context) error {
 	// posted, how much, and how many people are already on it.
 	requireReward := cfg.RequireReward == nil || *cfg.RequireReward
 	confirmed := make([]source.Issue, 0, len(issues))
-	unread, unrewarded := 0, 0
+	unread, unrewarded, expired := 0, 0, 0
+	now := time.Now()
 	for _, issue := range issues {
 		comments, err := gh.Comments(ctx, issue.Repo, issue.Number)
 		if err != nil {
 			unread++ // judged on labels alone, below
 		}
-		reward := rank.ReadReward(comments)
+		reward := rank.ReadReward(comments, now)
 		issue.RewardUSD, issue.RewardCommand, issue.Attempts = reward.Amount, reward.Command, reward.Attempts
 
 		labelled := rank.Amount(issue.Title+" "+strings.Join(issue.Labels, " ")) > 0
 		if requireReward && !issue.RewardCommand && !labelled {
-			unrewarded++
+			if reward.Expired {
+				expired++
+			} else {
+				unrewarded++
+			}
 			continue
 		}
 		confirmed = append(confirmed, issue)
@@ -192,17 +199,60 @@ func run(ctx context.Context) error {
 	if unrewarded > 0 {
 		warnings = append(warnings, fmt.Sprintf("reward: %d dropped (no reward command or amount found)", unrewarded))
 	}
+	if expired > 0 {
+		warnings = append(warnings, fmt.Sprintf("reward: %d dropped (reward older than %d days or posted through a closed platform)",
+			expired, int(rank.RewardMaxAge.Hours()/24)))
+	}
 	if unread > 0 {
 		warnings = append(warnings, fmt.Sprintf("reward: comments unreadable for %d issue(s)", unread))
 	}
 
-	now := time.Now()
+	// Audit contests come from their own feed and skip the GitHub filters: they
+	// are not issues, and the platform has already vetted who is paying.
+	if cfg.Contests == nil || *cfg.Contests {
+		sherlock := source.NewSherlock(time.Duration(cfg.TimeoutS) * time.Second)
+		for _, status := range []string{"RUNNING", "CREATED"} {
+			contests, err := sherlock.Contests(ctx, status)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("sherlock %s: %v", status, err))
+				continue
+			}
+			for _, c := range contests {
+				if !c.EndsAt.After(now) {
+					continue
+				}
+				issues = append(issues, contestIssue(c))
+			}
+		}
+	}
+
 	items := make([]contract.Item, 0, len(issues))
 	for _, scored := range rank.Top(issues, cfg.Languages, now, cfg.Limit) {
 		items = append(items, toItem(scored))
 	}
 
 	return contract.WriteResponse(os.Stdout, items, warnings)
+}
+
+// contestIssue presents an audit contest in the shape the ranking understands.
+// The prize pool is read as dollars: every contest seen in the feed pays in a
+// dollar stablecoin, and the token is kept in the title for the day one does not.
+func contestIssue(c source.Contest) source.Issue {
+	return source.Issue{
+		ID:     -int64(c.ID), // negative, so it cannot collide with a GitHub issue ID
+		Number: c.ID,
+		Title: fmt.Sprintf("[audit contest] %s: %d %s, ends %s",
+			c.Title, c.PrizePool, c.Token, c.EndsAt.Format("2006-01-02")),
+		Body:          c.Summary,
+		HTMLURL:       c.URL(),
+		Repo:          "sherlock.xyz",
+		Author:        "sherlock",
+		Labels:        []string{c.Kind},
+		CreatedAt:     c.StartsAt,
+		UpdatedAt:     c.StartsAt,
+		RewardUSD:     c.PrizePool,
+		RewardCommand: true,
+	}
 }
 
 func toItem(s rank.Scored) contract.Item {

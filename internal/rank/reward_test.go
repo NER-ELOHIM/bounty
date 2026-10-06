@@ -2,6 +2,7 @@ package rank
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Amadeus-22/bounty/internal/source"
 )
@@ -9,7 +10,7 @@ import (
 func mantenedor(bodies ...string) []source.Comment {
 	out := make([]source.Comment, 0, len(bodies))
 	for _, b := range bodies {
-		out = append(out, source.Comment{Body: b, Maintainer: true})
+		out = append(out, source.Comment{Body: b, Maintainer: true, CreatedAt: agora.Add(-24 * time.Hour)})
 	}
 	return out
 }
@@ -42,10 +43,28 @@ func TestReadReward(t *testing.T) {
 		},
 		{"palavra solta não é recompensa", mantenedor("is there a bounty for this?", "it costs $20 a month"), Reward{}},
 		{"comando no meio da frase não conta", mantenedor("you can type /bounty $50 to fund it"), Reward{}},
+		{
+			"recompensa antiga expira",
+			[]source.Comment{{Body: "/bounty $150", Maintainer: true, CreatedAt: agora.Add(-400 * 24 * time.Hour)}},
+			Reward{Expired: true},
+		},
+		{
+			"recompensa de plataforma encerrada expira, mesmo recente",
+			[]source.Comment{{Body: "## 💎 $150 bounty", Author: "algora-pbc[bot]", Maintainer: true, CreatedAt: agora.Add(-24 * time.Hour)}},
+			Reward{Expired: true},
+		},
+		{
+			"recompensa renovada vale",
+			[]source.Comment{
+				{Body: "/bounty $100", Maintainer: true, CreatedAt: agora.Add(-400 * 24 * time.Hour)},
+				{Body: "/bounty $250", Maintainer: true, CreatedAt: agora.Add(-10 * 24 * time.Hour)},
+			},
+			Reward{Amount: 250, Command: true, Expired: true},
+		},
 		{"sem comentários", nil, Reward{}},
 	}
 	for _, c := range casos {
-		if got := ReadReward(c.comments); got != c.want {
+		if got := ReadReward(c.comments, agora); got != c.want {
 			t.Errorf("%s: ReadReward = %+v, esperado %+v", c.nome, got, c.want)
 		}
 	}
